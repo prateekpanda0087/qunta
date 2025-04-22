@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quantum Mainnet Miner</title>
+    <style>
+        :root {
+            --solana-green: #14f195;
+            --background: #1a1a1a;
+        }
+        body {
+            font-family: 'Courier New', monospace;
+            background: var(--background);
+            color: #fff;
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .card {
+            background: rgba(255,255,255,0.05);
+            padding: 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+        }
+        button {
+            background: var(--solana-green);
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            margin: 8px 0;
+            font-weight: bold;
+            transition: opacity 0.3s;
+        }
+        button:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+        .balance {
+            font-size: 1.2em;
+            margin: 15px 0;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.66.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@solana/spl-token@0.3.8"></script>
+</head>
+<body>
+    <div class="card">
+        <button id="connectButton">Connect Phantom Wallet</button>
+        <div id="walletInfo" style="display: none;">
+            <div class="balance">SOL: <span id="solBalance">0.0000</span></div>
+            <div class="balance">QNT: <span id="qntBalance">0.0000</span></div>
+        </div>
+    </div>
+
+    <div class="card" id="miningSection" style="display: none;">
+        <button id="mineButton">Mine QNT (1 Token)</button>
+        <button id="redeemButton">Redeem 10000 QNT</button>
+        <p>Transaction Fee: 0.001 SOL</p>
+    </div>
+
+<script>
+// Mainnet Configuration
+const QNT_MINT = new solanaWeb3.PublicKey('REPLACE_WITH_MAINNET_MINT_ADDRESS');
+const FEE_ADDRESS = new solanaWeb3.PublicKey('dadgT7zGKHTZX2TrCcTUUVo9Y6FVAZpHmd87hEGysnj');
+const CONNECTION = new solanaWeb3.Connection(solanaWeb3.clusterApiUrl('mainnet-beta'));
+const DECIMALS = 9;
+
+let wallet;
+let qntTokenAccount;
+
+// Wallet Connection Handler
+document.getElementById('connectButton').addEventListener('click', async () => {
+    try {
+        if (!window.solana?.isPhantom) throw new Error('Please install Phantom Wallet!');
+        
+        // Connect to Phantom Wallet
+        const provider = window.solana;
+        await provider.connect();
+        wallet = provider;
+        
+        // Get Associated Token Account
+        const publicKey = new solanaWeb3.PublicKey(wallet.publicKey);
+        qntTokenAccount = await splToken.getAssociatedTokenAddress(QNT_MINT, publicKey);
+
+        // Create ATA if not exists
+        try {
+            await splToken.getAccount(CONNECTION, qntTokenAccount);
+        } catch {
+            const createATA = splToken.createAssociatedTokenAccountInstruction(
+                publicKey,
+                qntTokenAccount,
+                publicKey,
+                QNT_MINT
+            );
+            const tx = new solanaWeb3.Transaction().add(createATA);
+            await CONNECTION.sendTransaction(tx, [wallet]);
+        }
+
+        // Enable mining section
+        document.getElementById('miningSection').style.display = 'block';
+        document.getElementById('walletInfo').style.display = 'block';
+        updateBalances();
+    } catch (error) {
+        alert(Connection Error: ${error.message});
+    }
+});
+
+// Mining Handler
+document.getElementById('mineButton').addEventListener('click', async () => {
+    try {
+        document.getElementById('mineButton').disabled = true;
+        
+        // Create Transfer Instruction (From vault to user)
+        const transferInstruction = splToken.createTransferInstruction(
+            new solanaWeb3.PublicKey('VAULT_TOKEN_ACCOUNT_ADDRESS'), // Replace
+            qntTokenAccount,
+            new solanaWeb3.PublicKey('VAULT_AUTHORITY'), // Replace
+            BigInt(1 * Math.pow(10, DECIMALS))
+        );
+
+        // Create Fee Payment
+        const feeInstruction = solanaWeb3.SystemProgram.transfer({
+            fromPubkey: new solanaWeb3.PublicKey(wallet.publicKey),
+            toPubkey: FEE_ADDRESS,
+            lamports: 0.001 * solanaWeb3.LAMPORTS_PER_SOL
+        });
+
+        // Create Transaction
+        const transaction = new solanaWeb3.Transaction()
+            .add(feeInstruction)
+            .add(transferInstruction);
+
+        // Send Transaction
+        const signature = await wallet.signAndSendTransaction(transaction);
+        await CONNECTION.confirmTransaction(signature);
+        
+        updateBalances();
+    } catch (error) {
+        alert(Mining Failed: ${error.message});
+    } finally {
+        document.getElementById('mineButton').disabled = false;
+    }
+});
+
+// Redeem Handler
+document.getElementById('redeemButton').addEventListener('click', async () => {
+    const code = prompt("Enter admin redeem code:");
+    if (code !== "QNT-REDEEM-2024") return alert("Invalid code!");
+    
+    try {
+        const transferInstruction = splToken.createTransferInstruction(
+            new solanaWeb3.PublicKey('VAULT_TOKEN_ACCOUNT_ADDRESS'), // Replace
+            qntTokenAccount,
+            new solanaWeb3.PublicKey('VAULT_AUTHORITY'), // Replace
+            BigInt(10000 * Math.pow(10, DECIMALS))
+        );
+
+        const transaction = new solanaWeb3.Transaction().add(transferInstruction);
+        const signature = await wallet.signAndSendTransaction(transaction);
+        await CONNECTION.confirmTransaction(signature);
+        updateBalances();
+    } catch (error) {
+        alert(Redeem Failed: ${error.message});
+    }
+});
+
+// Balance Updates
+async function updateBalances() {
+    try {
+        const solBalance = await CONNECTION.getBalance(new solanaWeb3.PublicKey(wallet.publicKey));
+        const qntBalance = await splToken.getAccount(CONNECTION, qntTokenAccount);
+        
+        document.getElementById('solBalance').textContent = 
+            (solBalance / solanaWeb3.LAMPORTS_PER_SOL).toFixed(4);
+        document.getElementById('qntBalance').textContent = 
+            (qntBalance.amount / Math.pow(10, DECIMALS)).toFixed(4);
+    } catch (error) {
+        console.error('Balance Update Error:', error);
+    }
+}
+</script>
+</body>
+</html>
